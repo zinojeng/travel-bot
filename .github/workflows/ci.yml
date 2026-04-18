@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-compile:
+    name: py_compile + ruff + PII guard
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install minimal deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Byte-compile orchestrator.py
+        run: python -m py_compile orchestrator.py
+
+      - name: Ruff lint (non-blocking warnings, blocking errors)
+        run: |
+          ruff check orchestrator.py \
+            --select E9,F63,F7,F82,F401 \
+            --exclude before
+        # E9 syntax, F63/F7/F82 undefined / misuse, F401 unused imports
+
+      - name: PII / secret guard
+        shell: bash
+        run: |
+          set -e
+          # 禁止在 root orchestrator.py 出現已知 PII / 訂位代號 / 真實姓名
+          if grep -nE "AOQI83|JX31[45]|曾耀賢|劉曼莉|曾筠竹林|曾惠瑜" orchestrator.py; then
+            echo "::error file=orchestrator.py::PII detected — should be read from .env"
+            exit 1
+          fi
+          # .env 不應該被 commit
+          if [ -f ".env" ]; then
+            echo "::error::.env must not be committed"
+            exit 1
+          fi
+          # .env.example 一定要存在，避免使用者不知道哪些變數要設
+          test -f .env.example
